@@ -6,17 +6,17 @@ Der Dienst wechselt die aktive Eingabequelle für die gesamte macOS-Sitzung. Das
 
 ## Einrichten
 
-Schließe die Tastatur an oder kopple sie per Bluetooth. Du brauchst die Xcode Command Line Tools (`xcode-select --install`, falls `swiftc` fehlt).
+1. Lade im aktuellen Release unter **Assets** die Datei **Tastatur-Umschalter-macOS.zip** herunter. [Aktueller GitHub-Release](https://github.com/Addurezz/windows-de-keyboard-mac/releases/latest)
+2. Entpacke die ZIP und öffne **Installieren.command** per Doppelklick.
+3. Wähle deine Tastatur per Nummer. Drücke **Enter**, um die angezeigten Layouts zu übernehmen, oder **A**, um sie nach Namen auszuwählen.
 
-```bash
-./install.sh
-```
+Die ZIP enthält das fertige Programm für Intel- und Apple-Silicon-Macs ab macOS 13. Das private GitHub-Repository erfordert ein GitHub-Konto mit Zugriff. Der LaunchAgent läuft sofort und startet bei der nächsten Anmeldung automatisch.
 
-1. Wähle die Geräte-ID aus der Liste. Alternativ gib `--any-external` ein, um alle von macOS erkannten externen USB- und Bluetooth-HID-Tastaturen einzubeziehen.
-2. Bestätige dein derzeit aktives Mac-Layout mit Enter oder gib seine Layout-ID ein. Bei einer erneuten Einrichtung wird dein bisher eingestelltes Mac-Layout vorgeschlagen.
-3. Bestätige **Deutsch – Standard** für die externe Tastatur mit Enter oder gib eine andere Layout-ID ein.
+Der Release ist nicht von Apple notarisiert. Falls macOS den ersten Start blockiert und du dem Download vertraust, kannst du die Freigabe unter **Systemeinstellungen → Datenschutz & Sicherheit → Dennoch öffnen** erteilen. [Apple zum Öffnen heruntergeladener Programme](https://support.apple.com/de-de/102445)
 
-Der LaunchAgent läuft sofort und startet bei der nächsten Anmeldung automatisch.
+### Installation aus dem Quellcode
+
+Im geklonten Repo startet `./install.sh` dieselbe Einrichtung. Dieser Weg benötigt die Xcode Command Line Tools (`xcode-select --install`).
 
 ### IDs anzeigen und direkt installieren
 
@@ -46,8 +46,6 @@ Fehler des Dienstes stehen in `~/Library/Logs/io.github.windows-de-keyboard-mac.
 
 ## Deinstallieren
 
-```bash
-./install.sh --uninstall
-```
+Doppelklicke auf **Deinstallieren.command** im entpackten Release. Im geklonten Repo kannst du `./install.sh --uninstall` ausführen.
 
 Das Skript beendet den Dienst, stellt das konfigurierte Mac-Layout wieder her und entfernt den LaunchAgent sowie das Programm.
