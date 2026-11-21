@@ -4,6 +4,24 @@ import IOKit
 
 private let germanStandard = "com.apple.keylayout.German-DIN-2137"
 
+private enum KeyboardSelection {
+    case device(DeviceID)
+    case anyExternal
+
+    init(_ value: String) throws {
+        if value == "--any-external" {
+            self = .anyExternal
+        } else {
+            self = .device(try DeviceID(value))
+        }
+    }
+
+    var deviceID: DeviceID? {
+        guard case let .device(id) = self else { return nil }
+        return id
+    }
+}
+
 private struct SwitchError: LocalizedError {
     let message: String
 
@@ -37,34 +55,48 @@ private struct DeviceID {
     var label: String { String(format: "%04x:%04x", Int(vendor), Int(product)) }
 }
 
-private func keyboardMatching(_ id: DeviceID? = nil) -> CFMutableDictionary {
+private func hidMatching(_ id: DeviceID?) -> CFMutableDictionary {
     let matching = IOServiceMatching("IOHIDDevice") as NSMutableDictionary
-    var properties = ["PrimaryUsagePage": 1, "PrimaryUsage": 6]
     if let id {
-        properties["VendorID"] = Int(id.vendor)
-        properties["ProductID"] = Int(id.product)
+        matching["IOPropertyMatch"] = ["VendorID": Int(id.vendor), "ProductID": Int(id.product)]
     }
-    matching["IOPropertyMatch"] = properties
     return matching
 }
 
 private func forEachKeyboard(_ id: DeviceID? = nil, _ visit: (io_service_t) -> Void) throws {
     var iterator: io_iterator_t = 0
-    let result = IOServiceGetMatchingServices(kIOMainPortDefault, keyboardMatching(id), &iterator)
+    let result = IOServiceGetMatchingServices(kIOMainPortDefault, hidMatching(id), &iterator)
     guard result == KERN_SUCCESS else {
         throw SwitchError("Tastatursuche fehlgeschlagen (IOKit: \(result)).")
     }
     defer { IOObjectRelease(iterator) }
 
     while case let service = IOIteratorNext(iterator), service != 0 {
-        visit(service)
-        IOObjectRelease(service)
+        defer { IOObjectRelease(service) }
+        if isKeyboard(service) {
+            visit(service)
+        }
     }
 }
 
 private func registryProperty<T>(_ service: io_service_t, _ key: String) -> T? {
     IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?
         .takeRetainedValue() as? T
+}
+
+private func isKeyboard(_ service: io_service_t) -> Bool {
+    let usagePage: Int? = registryProperty(service, "PrimaryUsagePage")
+    let usage: Int? = registryProperty(service, "PrimaryUsage")
+    if usagePage == 1 && usage == 6 { return true }
+
+    let pairs: [[String: Int]] = registryProperty(service, "DeviceUsagePairs") ?? []
+    return pairs.contains { $0["DeviceUsagePage"] == 1 && $0["DeviceUsage"] == 6 }
+}
+
+private func isExternal(_ service: io_service_t) -> Bool {
+    let builtIn: Bool = registryProperty(service, "Built-In") ?? false
+    let transport: String = registryProperty(service, "Transport") ?? ""
+    return !builtIn && ["USB", "Bluetooth", "BluetoothLowEnergy"].contains(transport)
 }
 
 private func inputString(_ source: TISInputSource, _ key: CFString) -> String? {
@@ -108,13 +140,14 @@ private func selectLayout(_ id: String) throws {
 }
 
 private final class KeyboardWatcher {
-    private let id: DeviceID
+    private let selection: KeyboardSelection
     private let macLayout: String
     private let pcLayout: String
     private var pendingUpdate: DispatchWorkItem?
+    private var lastConnected: Bool?
 
-    init(id: DeviceID, macLayout: String, pcLayout: String) {
-        self.id = id
+    init(selection: KeyboardSelection, macLayout: String, pcLayout: String) {
+        self.selection = selection
         self.macLayout = macLayout
         self.pcLayout = pcLayout
     }
@@ -135,8 +168,17 @@ private final class KeyboardWatcher {
 
     private func update() throws {
         var connected = false
-        try forEachKeyboard(id) { _ in connected = true }
+        try forEachKeyboard(selection.deviceID) { service in
+            switch selection {
+            case .device:
+                connected = true
+            case .anyExternal:
+                connected = connected || isExternal(service)
+            }
+        }
+        guard connected != lastConnected else { return }
         try selectLayout(connected ? pcLayout : macLayout)
+        lastConnected = connected
     }
 
     func run() throws {
@@ -156,7 +198,7 @@ private final class KeyboardWatcher {
         for notification in [kIOMatchedNotification, kIOTerminatedNotification] {
             var iterator: io_iterator_t = 0
             let result = IOServiceAddMatchingNotification(
-                port, notification, keyboardMatching(id), { context, iterator in
+                port, notification, hidMatching(selection.deviceID), { context, iterator in
                     drain(iterator)
                     guard let context else { return }
                     Unmanaged<KeyboardWatcher>.fromOpaque(context).takeUnretainedValue().scheduleUpdate()
@@ -188,7 +230,7 @@ Verwendung:
   keyboard-switch layouts
   keyboard-switch current
   keyboard-switch select <Layout-ID>
-  keyboard-switch watch <VID:PID> <Mac-Layout-ID> [<PC-Layout-ID>]
+  keyboard-switch watch <VID:PID|--any-external> <Mac-Layout-ID> [<Extern-Layout-ID>]
 """
 
 private func run(_ args: [String]) throws {
@@ -196,11 +238,14 @@ private func run(_ args: [String]) throws {
     case "devices" where args.count == 1:
         var devices: Set<String> = []
         try forEachKeyboard { service in
-            guard let vendor: UInt16 = registryProperty(service, "VendorID"), vendor != 0,
-                  let product: UInt16 = registryProperty(service, "ProductID") else { return }
             let name: String = registryProperty(service, "Product") ?? "Unbekannt"
             let transport: String = registryProperty(service, "Transport") ?? "?"
-            devices.insert("\(DeviceID(vendor: vendor, product: product).label)\t\(transport)\t\(name)")
+            if let vendor: UInt16 = registryProperty(service, "VendorID"), vendor != 0,
+               let product: UInt16 = registryProperty(service, "ProductID") {
+                devices.insert("\(DeviceID(vendor: vendor, product: product).label)\t\(transport)\t\(name)")
+            } else if isExternal(service) {
+                devices.insert("ohne ID\t\(transport)\t\(name)")
+            }
         }
         devices.sorted().forEach { print($0) }
     case "layouts" where args.count == 1:
@@ -217,9 +262,9 @@ private func run(_ args: [String]) throws {
     case "select" where args.count == 2:
         try selectLayout(args[1])
     case "watch" where args.count == 3 || args.count == 4:
-        let id = try DeviceID(args[1])
+        let selection = try KeyboardSelection(args[1])
         let pcLayout = args.count == 4 ? args[3] : germanStandard
-        try KeyboardWatcher(id: id, macLayout: args[2], pcLayout: pcLayout).run()
+        try KeyboardWatcher(selection: selection, macLayout: args[2], pcLayout: pcLayout).run()
     case "--help", "-h", nil:
         print(usage)
     default:

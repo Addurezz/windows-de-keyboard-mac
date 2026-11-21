@@ -10,6 +10,16 @@ app_dir="$HOME/Library/Application Support/Windows DE Keyboard Mac"
 binary="$app_dir/keyboard-switch"
 log="$HOME/Library/Logs/$label.log"
 source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+default_external=com.apple.keylayout.German-DIN-2137
+
+usage() {
+    cat <<'USAGE'
+Einrichtung:   ./install.sh
+Geräte und Layouts anzeigen: ./install.sh --list
+Direkt:        ./install.sh <VID:PID|--any-external> <Mac-Layout-ID> [<Extern-Layout-ID>]
+Deinstallation: ./install.sh --uninstall
+USAGE
+}
 
 stop_agent() {
     if launchctl print "$service" >/dev/null 2>&1; then
@@ -27,26 +37,57 @@ if [[ ${1:-} == --uninstall && $# == 1 ]]; then
     exit 0
 fi
 
-if [[ $# -lt 2 || $# -gt 3 || ! $1 =~ ^[[:xdigit:]]{1,4}:[[:xdigit:]]{1,4}$ ]]; then
-    echo "Verwendung: ./install.sh <VID:PID> <Mac-Layout-ID> [<PC-Layout-ID>]" >&2
-    echo "Deinstallation: ./install.sh --uninstall" >&2
-    exit 2
+if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+    usage
+    exit 0
 fi
 
-device=$1
-if (( 16#${device%:*} == 0 )); then
-    echo "Die Hersteller-ID muss ungleich null sein." >&2
+if [[ $# == 1 && $1 != --list ]] || [[ $# -gt 3 ]]; then
+    usage >&2
     exit 2
 fi
-
-mac_layout=$2
-pc_layout=${3:-com.apple.keylayout.German-DIN-2137}
 
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/windows-de-keyboard-mac.XXXXXXXX")
 trap 'rm -rf -- "$scratch"' EXIT
+program="$scratch/keyboard-switch"
 
-swiftc -O -module-cache-path "$scratch/cache" "$source_dir/KeyboardSwitch.swift" -o "$scratch/keyboard-switch"
-layouts=$("$scratch/keyboard-switch" layouts)
+swiftc -O -module-cache-path "$scratch/cache" "$source_dir/KeyboardSwitch.swift" -o "$program"
+
+if [[ $# == 1 ]]; then
+    printf 'Erkannte Tastaturen (Geräte-ID, Transport, Name):\n'
+    "$program" devices
+    printf '\nVerfügbare Layouts (ID, Name):\n'
+    "$program" layouts
+    exit 0
+fi
+
+if [[ $# == 0 ]]; then
+    printf 'Erkannte Tastaturen (Geräte-ID, Transport, Name):\n'
+    "$program" devices
+    printf 'Geräte-ID eingeben oder --any-external für alle externen Tastaturen: '
+    IFS= read -r device
+
+    default_mac=$(plutil -extract ProgramArguments.3 raw -o - "$plist" 2>/dev/null || "$program" current)
+    printf 'Mac-Layout-ID [%s]: ' "$default_mac"
+    IFS= read -r mac_layout
+    mac_layout=${mac_layout:-$default_mac}
+    printf 'Externes Layout [%s]: ' "$default_external"
+    IFS= read -r pc_layout
+    pc_layout=${pc_layout:-$default_external}
+else
+    device=$1
+    mac_layout=$2
+    pc_layout=${3:-$default_external}
+fi
+
+if [[ $device != --any-external ]]; then
+    if [[ ! $device =~ ^[[:xdigit:]]{1,4}:[[:xdigit:]]{1,4}$ ]] || (( 16#${device%:*} == 0 )); then
+        printf 'Ungültige Geräte-ID. Gib VID:PID oder --any-external an.\n' >&2
+        exit 2
+    fi
+fi
+
+layouts=$("$program" layouts)
 for id in "$mac_layout" "$pc_layout"; do
     if ! cut -f 1 <<< "$layouts" | grep -Fx -- "$id" >/dev/null; then
         echo "Layout $id fehlt. Verfügbare Layouts:" >&2
@@ -70,7 +111,7 @@ plutil -lint "$new_plist" >/dev/null
 
 mkdir -p -- "$app_dir" "$agent_dir" "$(dirname -- "$log")"
 stop_agent
-install -m 755 "$scratch/keyboard-switch" "$binary"
+install -m 755 "$program" "$binary"
 install -m 644 "$new_plist" "$plist"
 launchctl bootstrap "$domain" "$plist"
 printf 'Layout-Umschalter gestartet. Fehlerprotokoll: %s\n' "$log"
