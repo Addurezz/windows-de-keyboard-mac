@@ -2,8 +2,6 @@ import Carbon
 import Foundation
 import IOKit
 
-private let germanStandard = "com.apple.keylayout.German-DIN-2137"
-
 private enum KeyboardSelection {
     case device(DeviceID)
     case anyExternal
@@ -47,7 +45,7 @@ private struct DeviceID {
               let vendor = UInt16(parts[0], radix: 16),
               let product = UInt16(parts[1], radix: 16),
               vendor != 0 else {
-            throw SwitchError("Erwartet wird eine Geräte-ID wie 1b1c:1bd7.")
+            throw SwitchError("Enter a device ID such as 1b1c:1bd7 or use --any-external.")
         }
         self.init(vendor: vendor, product: product)
     }
@@ -67,7 +65,7 @@ private func forEachKeyboard(_ id: DeviceID? = nil, _ visit: (io_service_t) -> V
     var iterator: io_iterator_t = 0
     let result = IOServiceGetMatchingServices(kIOMainPortDefault, hidMatching(id), &iterator)
     guard result == KERN_SUCCESS else {
-        throw SwitchError("Tastatursuche fehlgeschlagen (IOKit: \(result)).")
+        throw SwitchError("Could not enumerate keyboards (IOKit: \(result)).")
     }
     defer { IOObjectRelease(iterator) }
 
@@ -117,7 +115,7 @@ private func currentLayoutID() -> String? {
 
 private func layout(_ id: String) throws -> TISInputSource {
     guard let source = listLayouts().first(where: { inputString($0, kTISPropertyInputSourceID) == id }) else {
-        throw SwitchError("Layout \(id) fehlt. Verfügbare Layouts zeigt der Befehl layouts.")
+        throw SwitchError("Layout \(id) is unavailable. Use layouts to see your options.")
     }
     return source
 }
@@ -129,27 +127,27 @@ private func selectLayout(_ id: String) throws {
        !CFBooleanGetValue(Unmanaged<CFBoolean>.fromOpaque(enabled).takeUnretainedValue()) {
         let result = TISEnableInputSource(source)
         guard result == noErr else {
-            throw SwitchError("Layout \(id) konnte nicht aktiviert werden (macOS: \(result)).")
+            throw SwitchError("Layout \(id) could not be enabled (macOS: \(result)).")
         }
     }
 
     let result = TISSelectInputSource(source)
     guard result == noErr else {
-        throw SwitchError("Layout \(id) konnte nicht ausgewählt werden (macOS: \(result)).")
+        throw SwitchError("Layout \(id) could not be selected (macOS: \(result)).")
     }
 }
 
 private final class KeyboardWatcher {
     private let selection: KeyboardSelection
     private let macLayout: String
-    private let pcLayout: String
+    private let externalLayout: String
     private var pendingUpdate: DispatchWorkItem?
     private var lastConnected: Bool?
 
-    init(selection: KeyboardSelection, macLayout: String, pcLayout: String) {
+    init(selection: KeyboardSelection, macLayout: String, externalLayout: String) {
         self.selection = selection
         self.macLayout = macLayout
-        self.pcLayout = pcLayout
+        self.externalLayout = externalLayout
     }
 
     func scheduleUpdate() {
@@ -177,17 +175,17 @@ private final class KeyboardWatcher {
             }
         }
         guard connected != lastConnected else { return }
-        try selectLayout(connected ? pcLayout : macLayout)
+        try selectLayout(connected ? externalLayout : macLayout)
         lastConnected = connected
     }
 
     func run() throws {
         _ = try layout(macLayout)
-        _ = try layout(pcLayout)
+        _ = try layout(externalLayout)
 
         guard let port = IONotificationPortCreate(kIOMainPortDefault),
               let source = IONotificationPortGetRunLoopSource(port)?.takeUnretainedValue() else {
-            throw SwitchError("IOKit-Benachrichtigungen konnten nicht eingerichtet werden.")
+            throw SwitchError("Could not register for IOKit notifications.")
         }
         defer { IONotificationPortDestroy(port) }
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
@@ -206,10 +204,10 @@ private final class KeyboardWatcher {
                 Unmanaged.passUnretained(self).toOpaque(), &iterator
             )
             guard result == KERN_SUCCESS else {
-                throw SwitchError("IOKit-Benachrichtigung \(notification) fehlgeschlagen (\(result)).")
+                throw SwitchError("IOKit notification \(notification) failed (\(result)).")
             }
             iterators.append(iterator)
-            // Das Leeren des Iterators schaltet künftige Benachrichtigungen frei.
+            // Drain the iterator to receive future notifications.
             drain(iterator)
         }
 
@@ -225,12 +223,12 @@ private func drain(_ iterator: io_iterator_t) {
 }
 
 private let usage = """
-Verwendung:
+Usage:
   keyboard-switch devices
   keyboard-switch layouts
   keyboard-switch current
   keyboard-switch select <Layout-ID>
-  keyboard-switch watch <VID:PID|--any-external> <Mac-Layout-ID> [<Extern-Layout-ID>]
+  keyboard-switch watch <VID:PID|--any-external> <Mac-layout-ID> <external-layout-ID>
 """
 
 private func run(_ args: [String]) throws {
@@ -238,33 +236,38 @@ private func run(_ args: [String]) throws {
     case "devices" where args.count == 1:
         var devices: Set<String> = []
         try forEachKeyboard { service in
-            let name: String = registryProperty(service, "Product") ?? "Unbekannt"
+            let name: String = registryProperty(service, "Product") ?? "Unknown device"
             let transport: String = registryProperty(service, "Transport") ?? "?"
             if let vendor: UInt16 = registryProperty(service, "VendorID"), vendor != 0,
                let product: UInt16 = registryProperty(service, "ProductID") {
                 devices.insert("\(DeviceID(vendor: vendor, product: product).label)\t\(transport)\t\(name)")
             } else if isExternal(service) {
-                devices.insert("ohne ID\t\(transport)\t\(name)")
+                devices.insert("no ID\t\(transport)\t\(name)")
             }
         }
         devices.sorted().forEach { print($0) }
     case "layouts" where args.count == 1:
-        for source in listLayouts() {
+        for source in listLayouts().sorted(by: {
+            let left = inputString($0, kTISPropertyLocalizedName) ?? ""
+            let right = inputString($1, kTISPropertyLocalizedName) ?? ""
+            return left.localizedStandardCompare(right) == .orderedAscending
+        }) {
             guard let id = inputString(source, kTISPropertyInputSourceID) else { continue }
             let name = inputString(source, kTISPropertyLocalizedName) ?? id
             print("\(id)\t\(name)")
         }
     case "current" where args.count == 1:
-        guard let id = currentLayoutID() else {
-            throw SwitchError("Aktive Eingabequelle konnte nicht gelesen werden.")
+        guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+              let id = inputString(source, kTISPropertyInputSourceID) else {
+            throw SwitchError("Could not read the current keyboard layout.")
         }
         print(id)
     case "select" where args.count == 2:
         try selectLayout(args[1])
-    case "watch" where args.count == 3 || args.count == 4:
+    case "watch" where args.count == 4:
         let selection = try KeyboardSelection(args[1])
-        let pcLayout = args.count == 4 ? args[3] : germanStandard
-        try KeyboardWatcher(selection: selection, macLayout: args[2], pcLayout: pcLayout).run()
+        let externalLayout = args[3]
+        try KeyboardWatcher(selection: selection, macLayout: args[2], externalLayout: externalLayout).run()
     case "--help", "-h", nil:
         print(usage)
     default:

@@ -1,51 +1,37 @@
-# Tastatur-Layout-Umschalter für macOS
+# Mac Keyboard Tools
 
-Dieser Hintergrunddienst wechselt beim Anschließen einer externen Tastatur die macOS-Eingabequelle und stellt beim Abziehen dein gewohntes Layout wieder her. Standardmäßig verwendet er für externe Tastaturen **Deutsch – Standard**, etwa für AltGr + Q (`@`) und AltGr + 8 (`[`) auf deutschen Windows-Tastaturen. Du kannst für beide Zustände ein beliebiges installiertes macOS-Tastaturlayout auswählen.
+Switch macOS keyboard layouts when you connect or disconnect an external keyboard. Choose the layout that matches the keys printed on the external keyboard and the layout you want back when you unplug it. Both choices can use any available macOS keyboard layout, including custom layouts you have installed.
 
-Der Dienst wechselt die aktive Eingabequelle für die gesamte macOS-Sitzung. Das gewählte Layout gilt daher auch für die eingebaute Tastatur, solange die externe angeschlossen ist. Der Dienst prüft den Verbindungsstatus in IOKit.
+## Install
 
-## Einrichten
+1. Download **Mac-Keyboard-Tools.zip** from **Assets** on the [latest GitHub release](https://github.com/Addurezz/mac-keyboard-tools/releases/latest).
+2. Unzip it and double-click **Install.command**.
+3. Choose a keyboard by number, or choose **All external keyboards**.
+4. Choose the external keyboard's layout. The installer suggests your current Mac layout for when the keyboard is disconnected. Press **Enter** to install or **C** to change the choices.
 
-1. Lade im aktuellen Release unter **Assets** die Datei **Tastatur-Umschalter-macOS.zip** herunter. [Aktueller GitHub-Release](https://github.com/Addurezz/windows-de-keyboard-mac/releases/latest)
-2. Entpacke die ZIP und öffne **Installieren.command** per Doppelklick.
-3. Wähle deine Tastatur per Nummer. Drücke **Enter**, um die angezeigten Layouts zu übernehmen, oder **A**, um sie nach Namen auszuwählen.
+The ZIP includes a ready-to-run binary for Apple silicon and Intel Macs running macOS 13 or later. No Git clone or Xcode installation is required. The switcher starts immediately and runs automatically each time you sign in. Upgrades reuse the layouts you previously configured.
 
-Die ZIP enthält das fertige Programm für Intel- und Apple-Silicon-Macs ab macOS 13. Das private GitHub-Repository erfordert ein GitHub-Konto mit Zugriff. Der LaunchAgent läuft sofort und startet bei der nächsten Anmeldung automatisch.
+The release is not notarized by Apple. If macOS blocks the first launch and you trust the download, use **System Settings → Privacy & Security → Open Anyway**. [Apple's instructions](https://support.apple.com/en-us/102445)
 
-Der Release ist nicht von Apple notarisiert. Falls macOS den ersten Start blockiert und du dem Download vertraust, kannst du die Freigabe unter **Systemeinstellungen → Datenschutz & Sicherheit → Dennoch öffnen** erteilen. [Apple zum Öffnen heruntergeladener Programme](https://support.apple.com/de-de/102445)
+## Install from source
 
-### Installation aus dem Quellcode
-
-Im geklonten Repo startet `./install.sh` dieselbe Einrichtung. Dieser Weg benötigt die Xcode Command Line Tools (`xcode-select --install`).
-
-### IDs anzeigen und direkt installieren
+Run `./install.sh` in a cloned copy of the repository. This requires the Xcode Command Line Tools. To list device and layout IDs or configure both layouts directly:
 
 ```bash
 ./install.sh --list
+./install.sh --any-external com.apple.keylayout.US com.apple.keylayout.British
 ```
 
-`--list` zeigt die angeschlossenen Geräte und die verfügbaren Layouts mit ihren IDs. Beispiel für alle externen Tastaturen mit dem normalen Mac-Layout **Deutsch** als Rückfall:
+The first layout ID is used when the keyboard is disconnected. The second is used when it is connected. To watch an individual keyboard, replace `--any-external` with its device ID from the list.
 
-```bash
-./install.sh --any-external com.apple.keylayout.German
-```
+## What switches
 
-Für eine bestimmte Tastatur gib anstelle von `--any-external` ihre Geräte-ID ein. Ein optionales drittes Argument legt das externe Layout fest, etwa `com.apple.keylayout.US` für eine entsprechend beschriftete US-Tastatur.
+The app changes the macOS session's active layout, so the built-in keyboard also uses the external layout while a matching keyboard is connected. In **All external keyboards** mode, the external layout stays active until the last detected USB or Bluetooth keyboard disconnects. A wireless USB receiver may still report a keyboard while the receiver itself is plugged in. Selecting a specific device ID lets you exclude unrelated receivers. Keyboards of the same model can share an ID.
 
-## Verhalten bei mehreren Geräten
+If macOS changes the layout when you switch documents, check the automatic per-document input source setting under **System Settings → Keyboard → Text Input → Edit**. If the physical key positions are wrong, check whether macOS has identified your keyboard as ANSI, ISO, or JIS. [Apple's keyboard type guide](https://support.apple.com/guide/mac-help/specify-a-keyboard-type-mchlp2886/mac)
 
-Im Modus `--any-external` bleibt das externe Layout aktiv, solange mindestens eine externe USB- oder Bluetooth-Tastatur verbunden ist. USB-Funkempfänger können macOS eine Tastaturschnittstelle melden, solange der Empfänger steckt. Der Dienst erkennt in diesem Fall die Verbindung des Empfängers. Wähle bei Bedarf eine bestimmte Geräte-ID, um andere Empfänger auszuschließen. Geräte desselben Modells mit identischer Geräte-ID werden gemeinsam berücksichtigt.
+The error log is at `~/Library/Logs/io.github.windows-de-keyboard-mac.layout-switch.log`.
 
-## Prüfen
+## Uninstall
 
-Stecke die Tastatur ein und prüfe das Layout im macOS-Eingabemenü. Zieh sie wieder ab und prüfe, ob dein Mac-Layout zurückkehrt.
-
-Wenn macOS beim Wechsel zwischen Dokumenten selbst das Layout wechselt, prüfe unter **Systemeinstellungen → Tastatur → Texteingabe → Bearbeiten** die Option zum automatischen Wechsel der Eingabequelle pro Dokument. Wenn `<` und `^` vertauscht sind, prüfe den Tastaturtyp ISO für eine deutsche Tastatur mit hoher Eingabetaste. [Apple zur Auswahl des Tastaturtyps](https://support.apple.com/guide/mac-help/specify-a-keyboard-type-mchlp2886/mac)
-
-Fehler des Dienstes stehen in `~/Library/Logs/io.github.windows-de-keyboard-mac.layout-switch.log`.
-
-## Deinstallieren
-
-Doppelklicke auf **Deinstallieren.command** im entpackten Release. Im geklonten Repo kannst du `./install.sh --uninstall` ausführen.
-
-Das Skript beendet den Dienst, stellt das konfigurierte Mac-Layout wieder her und entfernt den LaunchAgent sowie das Programm.
+Double-click **Uninstall.command** from the unzipped release, or run `./install.sh --uninstall` from the source folder. The uninstaller stops the switcher and restores the layout configured for when the external keyboard is disconnected.

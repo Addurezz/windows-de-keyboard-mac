@@ -2,10 +2,10 @@
 set -euo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
-output="${1:-.build/Tastatur-Umschalter-macOS.zip}"
+output="${1:-.build/Mac-Keyboard-Tools.zip}"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/keyboard-release.XXXXXXXX")
 trap 'rm -rf -- "$scratch"' EXIT
-folder="$scratch/Tastatur-Umschalter"
+folder="$scratch/Mac Keyboard Tools"
 mkdir -p -- "$folder" "$(dirname -- "$output")"
 
 for arch in arm64 x86_64; do
@@ -29,8 +29,8 @@ make_launcher() {
     chmod +x "$folder/$filename"
 }
 
-make_launcher Installieren.command
-make_launcher Deinstallieren.command --uninstall
+make_launcher Install.command
+make_launcher Uninstall.command --uninstall
 ditto -c -k --keepParent "$folder" "$scratch/release.zip"
 install -m 644 "$scratch/release.zip" "$output"
 printf '%s\n' "$output"
